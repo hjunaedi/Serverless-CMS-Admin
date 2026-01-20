@@ -1,0 +1,5 @@
+{
+  "name": "Serverless CMS Admin",
+  "description": "A headless CMS admin panel designed for Google Sheets. Includes a generator for the required Google Apps Script backend.",
+  "requestFramePermissions": []
+}
