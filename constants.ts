@@ -1,27 +1,4 @@
-export const MOCK_POSTS = [
-  {
-    title: "Getting Started with Serverless CMS",
-    label: "Tutorial",
-    image: "https://picsum.photos/800/600",
-    content: "This is a demo post showing how the system works. Deploy the script to see real data.",
-    slug: "getting-started",
-    description: "Learn how to setup your Google Sheet CMS.",
-    status: "Published",
-    date: new Date().toISOString(),
-    type: "Post"
-  },
-  {
-    title: "Why Google Sheets?",
-    label: "Opinion",
-    image: "https://picsum.photos/800/601",
-    content: "Google Sheets is a powerful database for small to medium projects.",
-    slug: "why-google-sheets",
-    description: "An analysis of using Sheets as a DB.",
-    status: "Draft",
-    date: new Date().toISOString(),
-    type: "Article"
-  }
-];
+export const MOCK_POSTS = [];
 
 export const GOOGLE_APPS_SCRIPT_CODE = `/**
  * SERVERLESS HEADLESS CMS - BACKEND SCRIPT
@@ -82,6 +59,8 @@ function doPost(e) {
       return updatePost(data);
     } else if (action === 'deletePost') {
       return deletePost(data);
+    } else if (action === 'logMedia') {
+      return logMedia(data);
     }
 
     return response({ status: 'error', message: 'Invalid Action: ' + action });
@@ -101,25 +80,51 @@ function response(data) {
 }
 
 /**
+ * Helper: Get Config value from PropertyService OR CONFIG Sheet
+ */
+function getConfig(key) {
+  // 1. Try Script Properties (Secure way)
+  const props = PropertiesService.getScriptProperties();
+  let val = props.getProperty(key);
+  if (val) return val;
+
+  // 2. Try CONFIG Sheet (Easy way)
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(CONFIG_SHEET);
+    if (!sheet) return null;
+    
+    const data = sheet.getDataRange().getValues();
+    // Assuming Row 1 is header, start from Row 2
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === key) {
+        return data[i][1];
+      }
+    }
+  } catch (e) {
+    // Sheet might not exist
+  }
+  return null;
+}
+
+/**
  * Action: Get all posts
  */
 function getAllPosts() {
   const sheet = getSheet(SHEET_NAME);
   const data = sheet.getDataRange().getValues();
-  // Remove header row
   const rows = data.slice(1);
 
-  // Map columns A-I
   const posts = rows.map(row => ({
-    title: row[0],       // A: Judul 0
-    label: row[1],       // B: Label 1
-    image: row[2],       // C: Gambar 2
-    content: row[3],     // D: Body 3
-    slug: row[4],        // E: Slug + PermaLink 4
-    description: row[5], // F: Meta Deskripsi 5
-    status: row[6],      // G: Status View 6
-    date: row[7],        // H: Tgl/Jam 7
-    type: row[8]         // I: Type 8
+    title: row[0],
+    label: row[1],
+    image: row[2],
+    content: row[3],
+    slug: row[4],
+    description: row[5],
+    status: row[6],
+    date: row[7],
+    type: row[8]
   }));
 
   return response({ status: 'success', data: posts });
@@ -134,9 +139,7 @@ function getPostBySlug(slug) {
   const sheet = getSheet(SHEET_NAME);
   const data = sheet.getDataRange().getValues();
   
-  // Iterate from row 2 (index 1)
   for (let i = 1; i < data.length; i++) {
-    // Column E is index 4
     if (data[i][4] === slug) {
       const row = data[i];
       const post = {
@@ -162,12 +165,10 @@ function getPostBySlug(slug) {
 function createPost(data) {
   const sheet = getSheet(SHEET_NAME);
   
-  // Validation (Simple)
   if (!data.title || !data.slug) {
      return response({ status: 'error', message: 'Title and Slug are required' });
   }
 
-  // Append row matching A-I order
   sheet.appendRow([
     data.title,
     data.label || '',
@@ -192,10 +193,9 @@ function updatePost(data) {
   
   let rowIndex = -1;
   
-  // Find by Slug (4) or Title (0)
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][4] === data.slug || (data.oldSlug && rows[i][4] === data.oldSlug)) {
-      rowIndex = i + 1; // 1-based index for getRange
+      rowIndex = i + 1;
       break;
     }
   }
@@ -203,11 +203,6 @@ function updatePost(data) {
   if (rowIndex === -1) {
     return response({ status: 'error', message: 'Post not found for update' });
   }
-
-  // Update logic: we replace the whole row or specific cells.
-  // Here we replace the whole row content to ensure consistency.
-  // NOTE: This assumes 'data' contains ALL fields. If partial updates are needed,
-  // logic should be adjusted to merge with existing data.
   
   const updatedRow = [
     data.title,
@@ -234,7 +229,6 @@ function deletePost(data) {
   
   let rowIndex = -1;
   
-  // Find by Slug (4)
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][4] === data.slug) {
       rowIndex = i + 1;
@@ -254,16 +248,16 @@ function deletePost(data) {
  * Action: Auth ImageKit
  */
 function authImageKit() {
-  const props = PropertiesService.getScriptProperties();
-  const privateKey = props.getProperty('IMAGEKIT_PRIVATE_KEY');
+  const privateKey = getConfig('IMAGEKIT_PRIVATE_KEY');
   
   if (!privateKey) {
-    return response({ status: 'error', message: 'IMAGEKIT_PRIVATE_KEY not configured in Script Properties' });
+    return response({ status: 'error', message: 'IMAGEKIT_PRIVATE_KEY not found in Script Properties or CONFIG sheet' });
   }
   
   const token = Utilities.getUuid();
   const expire = Math.floor(Date.now() / 1000) + 2400; // 40 minutes
-  const signature = Utilities.computeHmacSha1Signature(token + expire, privateKey)
+  
+  const signature = Utilities.computeHmacSignature(Utilities.MacAlgorithm.HMAC_SHA_1, token + expire, privateKey)
     .reduce(function(str,chr){
       chr = (chr < 0 ? chr + 256 : chr).toString(16);
       return str + (chr.length==1?'0':'') + chr;
@@ -280,8 +274,24 @@ function authImageKit() {
 }
 
 /**
- * Helper: Get or create sheet (safely)
- * Note: Does not create main sheet, assumes it exists per requirements.
+ * Action: Log uploaded media
+ */
+function logMedia(data) {
+  try {
+    const sheet = getSheet(MEDIA_SHEET);
+    sheet.appendRow([
+      data.file_name || 'Unknown',
+      data.file_url || '',
+      new Date().toISOString()
+    ]);
+    return response({ status: 'success', message: 'Media logged' });
+  } catch (e) {
+    return response({ status: 'error', message: 'Failed to log media: ' + e.toString() });
+  }
+}
+
+/**
+ * Helper: Get or create sheet
  */
 function getSheet(name) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -302,17 +312,17 @@ function setup() {
   if (!ss.getSheetByName(CONFIG_SHEET)) {
     const s = ss.insertSheet(CONFIG_SHEET);
     s.appendRow(['Key', 'Value']);
+    s.appendRow(['IMAGEKIT_PRIVATE_KEY', 'Paste_Your_Private_Key_Here']);
   }
   
   // 2. MEDIA
   if (!ss.getSheetByName(MEDIA_SHEET)) {
     const s = ss.insertSheet(MEDIA_SHEET);
-    s.appendRow(['file_name', 'file_url']);
+    s.appendRow(['file_name', 'file_url', 'uploaded_at']);
   }
   
-  // 3. Ensure LIVE WEBSITE exists? User said they have it.
+  // 3. Ensure LIVE WEBSITE exists
   if (!ss.getSheetByName(SHEET_NAME)) {
-     // Optional: Create it if missing, but requirements said "I have a Google Sheet"
      const s = ss.insertSheet(SHEET_NAME);
      s.appendRow(['Judul 0', 'Label 1', 'Gambar 2', 'Body 3', 'Slug + PermaLink 4', 'Meta Deskripsi 5', 'Status View 6', 'Tgl/Jam 7', 'Type 8']);
   }

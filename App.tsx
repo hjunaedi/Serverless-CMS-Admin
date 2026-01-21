@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { Post, ViewMode } from './types';
-import { cms, getApiUrl, setApiUrl } from './services/cms';
+import { cms, getApiUrl, setApiUrl, getImageKitPublicKey, setImageKitPublicKey } from './services/cms';
 import Dashboard from './components/Dashboard';
 import Editor from './components/Editor';
 import ScriptViewer from './components/ScriptViewer';
-import { Layout, FileText, Settings, Code, PlusCircle, AlertTriangle } from 'lucide-react';
+import { Layout, Settings, Code, PlusCircle, AlertTriangle, CloudOff } from 'lucide-react';
 
 export default function App() {
   const [view, setView] = useState<ViewMode>('dashboard');
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
+  
+  // Config States
   const [apiUrl, setApiUrlState] = useState(getApiUrl());
   const [tempApiUrl, setTempApiUrl] = useState(getApiUrl());
+  const [tempIkKey, setTempIkKey] = useState(getImageKitPublicKey());
+  
   const [notification, setNotification] = useState<{msg: string, type: 'success'|'error'} | null>(null);
 
   useEffect(() => {
@@ -27,17 +31,27 @@ export default function App() {
   };
 
   const fetchPosts = async () => {
+    if (!apiUrl) {
+       setPosts([]);
+       return;
+    }
+
     setLoading(true);
     const res = await cms.getAllPosts();
     if (res.status === 'success' && res.data) {
       setPosts(res.data);
     } else {
       showNotification(res.message || 'Failed to fetch posts', 'error');
+      // If error suggests API issue, maybe we should not clear posts, but for now we keep it simple
     }
     setLoading(false);
   };
 
   const handleCreatePost = () => {
+    if (!apiUrl) {
+        showNotification("Please configure API URL in Settings first.", "error");
+        return;
+    }
     setEditingPost(null);
     setView('editor');
   };
@@ -83,7 +97,8 @@ export default function App() {
   const handleSaveSettings = () => {
     setApiUrl(tempApiUrl);
     setApiUrlState(tempApiUrl);
-    showNotification('Settings saved', 'success');
+    setImageKitPublicKey(tempIkKey);
+    showNotification('Settings saved locally', 'success');
     setView('dashboard');
   };
 
@@ -137,9 +152,9 @@ export default function App() {
 
         <div className="p-4 border-t border-gray-100">
            {!apiUrl ? (
-             <div className="bg-orange-50 text-orange-800 text-xs p-3 rounded border border-orange-100 flex gap-2 items-start">
-               <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-               <p>Demo Mode. Connect API in Settings.</p>
+             <div className="bg-red-50 text-red-800 text-xs p-3 rounded border border-red-100 flex gap-2 items-start">
+               <CloudOff size={14} className="mt-0.5 shrink-0" />
+               <p>Setup Required. Go to Settings.</p>
              </div>
            ) : (
              <div className="bg-green-50 text-green-800 text-xs p-3 rounded border border-green-100 flex gap-2 items-center">
@@ -168,19 +183,30 @@ export default function App() {
                 {view === 'settings' && 'Settings'}
               </h1>
               <p className="text-gray-500 mt-1">
-                {view === 'dashboard' && 'Manage your content efficiently.'}
-                {view === 'script' && 'Generate and copy the Google Apps Script code required for your backend.'}
-                {view === 'settings' && 'Configure your Google Apps Script Web App URL.'}
+                {view === 'dashboard' && 'Manage your content.'}
+                {view === 'script' && 'Generate the Google Apps Script backend.'}
+                {view === 'settings' && 'Configure connection to Google Sheets.'}
               </p>
            </header>
 
            {view === 'dashboard' && (
-             <Dashboard 
-               posts={posts} 
-               onEdit={handleEditPost} 
-               onDelete={handleDeletePost} 
-               loading={loading} 
-             />
+             !apiUrl ? (
+               <div className="text-center py-20 bg-white rounded-lg shadow border border-gray-200">
+                  <CloudOff size={48} className="mx-auto text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900">Not Connected</h3>
+                  <p className="mt-2 text-gray-500 mb-6">Connect your Google Sheet backend to start managing content.</p>
+                  <button onClick={() => setView('settings')} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">
+                    Go to Settings
+                  </button>
+               </div>
+             ) : (
+               <Dashboard 
+                 posts={posts} 
+                 onEdit={handleEditPost} 
+                 onDelete={handleDeletePost} 
+                 loading={loading} 
+               />
+             )
            )}
 
            {view === 'editor' && (
@@ -195,9 +221,10 @@ export default function App() {
            {view === 'script' && <ScriptViewer />}
 
            {view === 'settings' && (
-             <div className="bg-white p-6 rounded-lg shadow border border-gray-200 max-w-2xl">
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Google Apps Script Web App URL</label>
+             <div className="bg-white p-6 rounded-lg shadow border border-gray-200 max-w-2xl space-y-6">
+                <div>
+                  <h3 className="text-lg font-medium leading-6 text-gray-900 mb-4">Google Apps Script</h3>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Web App URL</label>
                   <input 
                     type="text" 
                     value={tempApiUrl}
@@ -206,15 +233,35 @@ export default function App() {
                     placeholder="https://script.google.com/macros/s/..."
                   />
                   <p className="text-xs text-gray-500 mt-2">
-                    Paste the deployment URL here to switch from Demo Mode to Live Mode.
+                    Deploy the backend script and paste the URL here.
                   </p>
                 </div>
-                <button 
-                  onClick={handleSaveSettings}
-                  className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
-                >
-                  Save Configuration
-                </button>
+
+                <div className="pt-6 border-t border-gray-200">
+                  <h3 className="text-lg font-medium leading-6 text-gray-900 mb-4">ImageKit Integration</h3>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Public Key</label>
+                  <input 
+                    type="text" 
+                    value={tempIkKey}
+                    onChange={(e) => setTempIkKey(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-mono"
+                    placeholder="public_..."
+                  />
+                  <p className="text-xs text-gray-500 mt-2">
+                    Required for image uploads.
+                    <br/>
+                    <span className="text-gray-400">Note: Private Key must be set in the Google Sheet (CONFIG tab).</span>
+                  </p>
+                </div>
+
+                <div className="pt-4">
+                  <button 
+                    onClick={handleSaveSettings}
+                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+                  >
+                    Save Configuration
+                  </button>
+                </div>
              </div>
            )}
         </div>

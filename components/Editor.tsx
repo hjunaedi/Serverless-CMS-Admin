@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Post } from '../types';
-import { Save, ArrowLeft, Image as ImageIcon } from 'lucide-react';
+import { Save, ArrowLeft, Image as ImageIcon, Upload, Loader } from 'lucide-react';
+import { cms, getImageKitPublicKey } from '../services/cms';
 
 interface EditorProps {
   initialData?: Post | null;
@@ -23,6 +24,7 @@ const emptyPost: Post = {
 
 const Editor: React.FC<EditorProps> = ({ initialData, onSave, onCancel, isSaving }) => {
   const [formData, setFormData] = useState<Post>(emptyPost);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     if (initialData) {
@@ -36,6 +38,65 @@ const Editor: React.FC<EditorProps> = ({ initialData, onSave, onCancel, isSaving
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const publicKey = getImageKitPublicKey();
+    if (!publicKey) {
+        alert("Please configure ImageKit Public Key in Settings first.");
+        return;
+    }
+
+    setUploading(true);
+    try {
+        // 1. Get Auth Params from Backend
+        const authRes = await cms.authImageKit();
+        if (authRes.status !== 'success' || !authRes.data) {
+            throw new Error(authRes.message || "Failed to authenticate with ImageKit");
+        }
+        
+        const { token, expire, signature } = authRes.data;
+
+        // 2. Upload to ImageKit
+        const uploadData = new FormData();
+        uploadData.append('file', file);
+        uploadData.append('fileName', file.name);
+        uploadData.append('publicKey', publicKey);
+        uploadData.append('signature', signature);
+        uploadData.append('expire', expire.toString());
+        uploadData.append('token', token);
+        uploadData.append('useUniqueFileName', 'true');
+
+        const res = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
+            method: 'POST',
+            body: uploadData,
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.message || "Image upload failed");
+        }
+
+        // 3. Update form with new URL
+        setFormData(prev => ({ ...prev, image: data.url }));
+
+        // 4. Log to MEDIA Sheet (Fire and forget, but we await to ensure it doesn't error silently)
+        await cms.logMedia({
+            file_name: file.name,
+            file_url: data.url
+        });
+
+    } catch (err: any) {
+        console.error(err);
+        alert(`Upload Error: ${err.message}`);
+    } finally {
+        setUploading(false);
+        // Reset file input
+        e.target.value = '';
+    }
   };
 
   const generateSlug = () => {
@@ -149,7 +210,7 @@ const Editor: React.FC<EditorProps> = ({ initialData, onSave, onCancel, isSaving
              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Date (Col H)</label>
                 <input
-                  type="datetime-local" // Simplified for demo, usually just date
+                  type="datetime-local" 
                   name="date"
                   value={formData.date}
                   onChange={handleChange}
@@ -190,13 +251,27 @@ const Editor: React.FC<EditorProps> = ({ initialData, onSave, onCancel, isSaving
                 <label className="block text-sm font-medium text-gray-700 mb-1">Image URL</label>
                 <div className="flex gap-2">
                     <input
-                    type="text"
-                    name="image"
-                    value={formData.image}
-                    onChange={handleChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded bg-white text-xs"
-                    placeholder="https://..."
+                      type="text"
+                      name="image"
+                      value={formData.image}
+                      onChange={handleChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded bg-white text-xs"
+                      placeholder="https://..."
                     />
+                    <label className={`flex items-center justify-center px-3 py-2 bg-white border border-gray-300 rounded cursor-pointer hover:bg-gray-50 transition-colors ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                      {uploading ? (
+                        <Loader size={16} className="animate-spin text-blue-600" />
+                      ) : (
+                        <Upload size={16} className="text-gray-600" />
+                      )}
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={handleImageUpload}
+                        disabled={uploading}
+                      />
+                    </label>
                 </div>
                 {formData.image && (
                     <div className="mt-2 rounded overflow-hidden border border-gray-200">
