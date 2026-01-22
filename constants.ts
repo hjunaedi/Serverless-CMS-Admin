@@ -25,6 +25,8 @@ function doGet(e) {
       return getPostBySlug(e.parameter.slug);
     } else if (action === 'authImageKit') {
       return authImageKit();
+    } else if (action === 'getSystemStatus') {
+      return getSystemStatus();
     }
     
     return response({ status: 'error', message: 'Invalid Action: ' + action });
@@ -97,14 +99,41 @@ function getConfig(key) {
     const data = sheet.getDataRange().getValues();
     // Assuming Row 1 is header, start from Row 2
     for (let i = 1; i < data.length; i++) {
-      if (data[i][0] === key) {
-        return data[i][1];
+      if (String(data[i][0]).trim() === key) {
+        return String(data[i][1]).trim();
       }
     }
   } catch (e) {
     // Sheet might not exist
   }
   return null;
+}
+
+/**
+ * Action: Get System Status (Health Check)
+ */
+function getSystemStatus() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const live = !!ss.getSheetByName(SHEET_NAME);
+  const config = !!ss.getSheetByName(CONFIG_SHEET);
+  const media = !!ss.getSheetByName(MEDIA_SHEET);
+  
+  const key = getConfig('IMAGEKIT_PRIVATE_KEY');
+  
+  return response({
+    status: 'success',
+    data: {
+      sheets: {
+        website: live,
+        config: config,
+        media: media
+      },
+      config: {
+        imageKitKey: !!key
+      },
+      version: '1.0.1'
+    }
+  });
 }
 
 /**

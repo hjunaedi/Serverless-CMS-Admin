@@ -10,6 +10,18 @@ export interface Post {
   type: string;
 }
 
+export interface SystemStatus {
+  sheets: {
+    website: boolean;
+    config: boolean;
+    media: boolean;
+  };
+  config: {
+    imageKitKey: boolean;
+  };
+  version: string;
+}
+
 export interface ApiResponse<T> {
   status: 'success' | 'error';
   data?: T;

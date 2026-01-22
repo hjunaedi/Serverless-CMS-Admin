@@ -1,4 +1,4 @@
-import { Post, ApiResponse } from '../types';
+import { Post, ApiResponse, SystemStatus } from '../types';
 
 const STORAGE_KEY_API = 'cms_api_url';
 const STORAGE_KEY_IK_PUBLIC = 'cms_ik_public_key';
@@ -64,4 +64,5 @@ export const cms = {
   deletePost: (slug: string) => apiRequest('deletePost', 'POST', { slug }),
   authImageKit: () => apiRequest<{token: string, expire: number, signature: string}>('authImageKit', 'GET'),
   logMedia: (data: { file_name: string, file_url: string }) => apiRequest('logMedia', 'POST', data),
+  checkConnection: () => apiRequest<SystemStatus>('getSystemStatus', 'GET'),
 };

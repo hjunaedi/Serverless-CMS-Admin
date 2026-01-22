@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Post, ViewMode } from './types';
+import { Post, ViewMode, SystemStatus } from './types';
 import { cms, getApiUrl, setApiUrl, getImageKitPublicKey, setImageKitPublicKey } from './services/cms';
 import Dashboard from './components/Dashboard';
 import Editor from './components/Editor';
 import ScriptViewer from './components/ScriptViewer';
-import { Layout, Settings, Code, PlusCircle, AlertTriangle, CloudOff } from 'lucide-react';
+import { Layout, Settings, Code, PlusCircle, AlertTriangle, CloudOff, RefreshCw, CheckCircle, XCircle, Loader } from 'lucide-react';
 
 export default function App() {
   const [view, setView] = useState<ViewMode>('dashboard');
@@ -17,6 +17,10 @@ export default function App() {
   const [tempApiUrl, setTempApiUrl] = useState(getApiUrl());
   const [tempIkKey, setTempIkKey] = useState(getImageKitPublicKey());
   
+  // Connection Test State
+  const [checking, setChecking] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<SystemStatus | null>(null);
+
   const [notification, setNotification] = useState<{msg: string, type: 'success'|'error'} | null>(null);
 
   useEffect(() => {
@@ -42,7 +46,6 @@ export default function App() {
       setPosts(res.data);
     } else {
       showNotification(res.message || 'Failed to fetch posts', 'error');
-      // If error suggests API issue, maybe we should not clear posts, but for now we keep it simple
     }
     setLoading(false);
   };
@@ -100,6 +103,30 @@ export default function App() {
     setImageKitPublicKey(tempIkKey);
     showNotification('Settings saved locally', 'success');
     setView('dashboard');
+  };
+
+  const handleCheckConnection = async () => {
+    if (!tempApiUrl) {
+      showNotification("Please enter a Web App URL first", "error");
+      return;
+    }
+    // Temporarily set API URL to test it without saving
+    setApiUrl(tempApiUrl);
+    setChecking(true);
+    try {
+      const res = await cms.checkConnection();
+      if (res.status === 'success' && res.data) {
+        setConnectionStatus(res.data);
+        showNotification("Connection established!", "success");
+      } else {
+        setConnectionStatus(null);
+        showNotification("Connection failed: " + res.message, "error");
+      }
+    } catch (e) {
+      showNotification("Network error", "error");
+    } finally {
+      setChecking(false);
+    }
   };
 
   return (
@@ -254,10 +281,51 @@ export default function App() {
                   </p>
                 </div>
 
-                <div className="pt-4">
+                <div className="pt-6 border-t border-gray-200">
+                  <h3 className="text-lg font-medium leading-6 text-gray-900 mb-4">Connection Status</h3>
+                  <p className="text-sm text-gray-500 mb-4">
+                    Verify that your Google Sheet has the required <strong>CONFIG</strong> and <strong>MEDIA</strong> tabs.
+                  </p>
+                  
+                  <button 
+                    onClick={handleCheckConnection}
+                    disabled={checking || !tempApiUrl}
+                    className="flex items-center gap-2 bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900 disabled:opacity-50 transition-colors"
+                  >
+                    {checking ? <Loader className="animate-spin" size={16}/> : <RefreshCw size={16}/>}
+                    Test Connection
+                  </button>
+
+                  {connectionStatus && (
+                      <div className="mt-4 grid grid-cols-1 gap-3 bg-gray-50 p-4 rounded-lg border border-gray-200">
+                         <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gray-700">Script Reachable</span>
+                            <CheckCircle size={18} className="text-green-600" />
+                         </div>
+                         <div className="flex items-center justify-between">
+                            <span className="text-sm text-gray-600">Sheet: LIVE WEBSITE</span>
+                            {connectionStatus.sheets.website ? <CheckCircle size={18} className="text-green-600" /> : <XCircle size={18} className="text-red-500" />}
+                         </div>
+                         <div className="flex items-center justify-between">
+                            <span className="text-sm text-gray-600">Sheet: CONFIG</span>
+                            {connectionStatus.sheets.config ? <CheckCircle size={18} className="text-green-600" /> : <XCircle size={18} className="text-red-500" />}
+                         </div>
+                         <div className="flex items-center justify-between">
+                            <span className="text-sm text-gray-600">Sheet: MEDIA</span>
+                            {connectionStatus.sheets.media ? <CheckCircle size={18} className="text-green-600" /> : <XCircle size={18} className="text-red-500" />}
+                         </div>
+                         <div className="flex items-center justify-between border-t border-gray-200 pt-2 mt-1">
+                            <span className="text-sm text-gray-600">ImageKit Private Key</span>
+                            {connectionStatus.config.imageKitKey ? <CheckCircle size={18} className="text-green-600" /> : <div className="flex items-center gap-2"><span className="text-xs text-red-500">Not found in CONFIG</span><XCircle size={18} className="text-red-500" /></div>}
+                         </div>
+                      </div>
+                  )}
+                </div>
+
+                <div className="pt-4 border-t border-gray-200">
                   <button 
                     onClick={handleSaveSettings}
-                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+                    className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors w-full sm:w-auto"
                   >
                     Save Configuration
                   </button>

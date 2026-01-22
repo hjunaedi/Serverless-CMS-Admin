@@ -1,27 +1,480 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
+<head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Serverless CMS Admin</title>
+    <title>Serverless CMS Admin - Standalone</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-      body {
-        background-color: #f3f4f6;
-      }
+        body { background-color: #f3f4f6; }
+        .line-clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1f2937; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
     </style>
-  <script type="importmap">
+    <script type="importmap">
 {
   "imports": {
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "react": "https://esm.sh/react@19",
+    "react-dom": "https://esm.sh/react-dom@19",
+    "react-dom/client": "https://esm.sh/react-dom@19/client",
+    "htm": "https://esm.sh/htm@3.1.1",
+    "lucide-react": "https://esm.sh/lucide-react@0.460.0?deps=react@19",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3"
+    "react/": "https://esm.sh/react@^19.2.3/"
   }
 }
 </script>
 </head>
-  <body>
+<body>
     <div id="root"></div>
-  </body>
+
+    <script type="module">
+        import React, { useState, useEffect, useMemo, createElement } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import htm from 'htm';
+        import * as Lucide from 'lucide-react';
+
+        const html = htm.bind(createElement);
+
+        // --- CONSTANTS & BACKEND CODE ---
+        const STORAGE_KEY_API = 'cms_api_url';
+        const STORAGE_KEY_IK_PUBLIC = 'cms_ik_public_key';
+
+        const GOOGLE_APPS_SCRIPT_CODE = `/**
+ * SERVERLESS HEADLESS CMS - BACKEND SCRIPT
+ * Version: 1.0.1 (Consolidated)
+ */
+
+const SHEET_NAME = 'LIVE WEBSITE';
+const CONFIG_SHEET = 'CONFIG';
+const MEDIA_SHEET = 'MEDIA';
+
+function doGet(e) {
+  const lock = LockService.getScriptLock();
+  lock.tryLock(10000);
+  try {
+    const action = e.parameter.action;
+    if (action === 'getAllPosts') return response({ status: 'success', data: getAllPosts() });
+    if (action === 'authImageKit') return authImageKit();
+    if (action === 'getSystemStatus') return getSystemStatus();
+    return response({ status: 'error', message: 'Invalid Action: ' + action });
+  } catch (err) {
+    return response({ status: 'error', message: err.toString() });
+  } finally { lock.releaseLock(); }
+}
+
+function doPost(e) {
+  const lock = LockService.getScriptLock();
+  lock.tryLock(10000);
+  try {
+    const action = e.parameter.action;
+    let data = JSON.parse(e.postData.contents);
+    if (action === 'createPost') return createPost(data);
+    if (action === 'updatePost') return updatePost(data);
+    if (action === 'deletePost') return deletePost(data);
+    if (action === 'logMedia') return logMedia(data);
+    return response({ status: 'error', message: 'Invalid Action: ' + action });
+  } catch (err) {
+    return response({ status: 'error', message: err.toString() });
+  } finally { lock.releaseLock(); }
+}
+
+function response(data) {
+  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function getConfig(key) {
+  const props = PropertiesService.getScriptProperties();
+  let val = props.getProperty(key);
+  if (val) return val;
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(CONFIG_SHEET);
+    if (!sheet) return null;
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === key) return String(data[i][1]).trim();
+    }
+  } catch (e) {}
+  return null;
+}
+
+function getSystemStatus() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  return response({
+    status: 'success',
+    data: {
+      sheets: {
+        website: !!ss.getSheetByName(SHEET_NAME),
+        config: !!ss.getSheetByName(CONFIG_SHEET),
+        media: !!ss.getSheetByName(MEDIA_SHEET)
+      },
+      config: { imageKitKey: !!getConfig('IMAGEKIT_PRIVATE_KEY') },
+      version: '1.0.1'
+    }
+  });
+}
+
+function getAllPosts() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  return data.slice(1).map(row => ({
+    title: row[0], label: row[1], image: row[2], content: row[3],
+    slug: row[4], description: row[5], status: row[6], date: row[7], type: row[8]
+  }));
+}
+
+function createPost(data) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  sheet.appendRow([data.title, data.label, data.image, data.content, data.slug, data.description, data.status, data.date, data.type]);
+  return response({ status: 'success', message: 'Post created' });
+}
+
+function updatePost(data) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  const rows = sheet.getDataRange().getValues();
+  let rowIndex = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][4] === data.slug || (data.oldSlug && rows[i][4] === data.oldSlug)) { rowIndex = i + 1; break; }
+  }
+  if (rowIndex === -1) return response({ status: 'error', message: 'Post not found' });
+  sheet.getRange(rowIndex, 1, 1, 9).setValues([[data.title, data.label, data.image, data.content, data.slug, data.description, data.status, data.date, data.type]]);
+  return response({ status: 'success', message: 'Post updated' });
+}
+
+function deletePost(data) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  const rows = sheet.getDataRange().getValues();
+  let rowIndex = -1;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][4] === data.slug) { rowIndex = i + 1; break; }
+  }
+  if (rowIndex === -1) return response({ status: 'error', message: 'Post not found' });
+  sheet.deleteRow(rowIndex);
+  return response({ status: 'success', message: 'Post deleted' });
+}
+
+function authImageKit() {
+  const privateKey = getConfig('IMAGEKIT_PRIVATE_KEY');
+  if (!privateKey) return response({ status: 'error', message: 'Private key missing' });
+  const token = Utilities.getUuid();
+  const expire = Math.floor(Date.now() / 1000) + 2400;
+  const signature = Utilities.computeHmacSignature(Utilities.MacAlgorithm.HMAC_SHA_1, token + expire, privateKey)
+    .reduce((str,chr) => str + (chr < 0 ? chr + 256 : chr).toString(16).padStart(2, '0'), '');
+  return response({ status: 'success', data: { token, expire, signature } });
+}
+
+function logMedia(data) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(MEDIA_SHEET);
+  if (sheet) sheet.appendRow([data.file_name, data.file_url, new Date().toISOString()]);
+  return response({ status: 'success' });
+}
+
+function setup() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss.getSheetByName(CONFIG_SHEET)) {
+    const s = ss.insertSheet(CONFIG_SHEET);
+    s.appendRow(['Key', 'Value']);
+    s.appendRow(['IMAGEKIT_PRIVATE_KEY', '']);
+  }
+  if (!ss.getSheetByName(MEDIA_SHEET)) {
+    const s = ss.insertSheet(MEDIA_SHEET);
+    s.appendRow(['file_name', 'file_url', 'uploaded_at']);
+  }
+  if (!ss.getSheetByName(SHEET_NAME)) {
+     const s = ss.insertSheet(SHEET_NAME);
+     s.appendRow(['Judul', 'Label', 'Gambar', 'Body', 'Slug', 'Meta Deskripsi', 'Status', 'Tgl', 'Type']);
+  }
+}`;
+
+        // --- SERVICES ---
+        const getApiUrl = () => localStorage.getItem(STORAGE_KEY_API) || '';
+        const setApiUrl = (url) => localStorage.setItem(STORAGE_KEY_API, url);
+        const getImageKitPublicKey = () => localStorage.getItem(STORAGE_KEY_IK_PUBLIC) || '';
+        const setImageKitPublicKey = (key) => localStorage.setItem(STORAGE_KEY_IK_PUBLIC, key);
+
+        async function apiRequest(action, method, body) {
+            const baseUrl = getApiUrl();
+            if (!baseUrl) return { status: 'error', message: 'API URL not configured.' };
+            let url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}action=${action}`;
+            const options = { method: 'POST' };
+            if (method === 'GET') {
+                if (body) url += `&${new URLSearchParams(body).toString()}`;
+                options.method = 'GET';
+            } else {
+                options.body = JSON.stringify(body);
+            }
+            try {
+                const res = await fetch(url, options);
+                return await res.json();
+            } catch (error) {
+                return { status: 'error', message: 'Network error or CORS issue. Ensure Web App is deployed as "Anyone".' };
+            }
+        }
+
+        const cms = {
+            getAllPosts: () => apiRequest('getAllPosts', 'GET'),
+            createPost: (post) => apiRequest('createPost', 'POST', post),
+            updatePost: (post) => apiRequest('updatePost', 'POST', post),
+            deletePost: (slug) => apiRequest('deletePost', 'POST', { slug }),
+            authImageKit: () => apiRequest('authImageKit', 'GET'),
+            logMedia: (data) => apiRequest('logMedia', 'POST', data),
+            checkConnection: () => apiRequest('getSystemStatus', 'GET'),
+        };
+
+        // --- COMPONENTS ---
+        const Icon = ({ name, size = 18, ...props }) => html`<${Lucide[name]} size=${size} ...${props} />`;
+
+        const Dashboard = ({ posts, onEdit, onDelete, loading }) => {
+            if (loading) return html`<div className="flex justify-center py-20"><${Icon} name="Loader" className="animate-spin text-blue-600" size=${40} /></div>`;
+            if (posts.length === 0) return html`<div className="text-center py-20 bg-white rounded-lg border">No posts found. Connect API or create one.</div>`;
+            
+            return html`
+                <div className="bg-white rounded-lg shadow overflow-hidden border">
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Title / Slug</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                            ${posts.map(post => html`
+                                <tr key=${post.slug} className="hover:bg-gray-50">
+                                    <td className="px-6 py-4">
+                                        <div className="flex items-center">
+                                            ${post.image && html`<img className="h-8 w-8 rounded object-cover mr-3" src=${post.image} />`}
+                                            <div>
+                                                <div className="text-sm font-medium text-gray-900 line-clamp-1">${post.title}</div>
+                                                <div className="text-xs text-gray-500 font-mono">${post.slug}</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <span className=${`px-2 py-0.5 rounded-full text-xs font-bold ${post.status === 'Published' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                            ${post.status}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-4 text-right">
+                                        <button onClick=${() => onEdit(post)} className="text-blue-600 mr-3"><${Icon} name="Edit2" size=${16}/></button>
+                                        <button onClick=${() => onDelete(post.slug)} className="text-red-600"><${Icon} name="Trash2" size=${16}/></button>
+                                    </td>
+                                </tr>
+                            `)}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        };
+
+        const Editor = ({ initialData, onSave, onCancel, isSaving }) => {
+            const [form, setForm] = useState(initialData || { 
+                title: '', label: '', image: '', content: '', 
+                slug: '', description: '', status: 'Draft', 
+                date: new Date().toISOString().split('T')[0], type: 'Post' 
+            });
+            const [uploading, setUploading] = useState(false);
+
+            const handleImage = async (e) => {
+                const file = e.target.files[0]; if (!file) return;
+                const pubKey = getImageKitPublicKey(); if (!pubKey) return alert("Public key required in Settings.");
+                setUploading(true);
+                try {
+                    const auth = await cms.authImageKit(); if (auth.status !== 'success' || !auth.data) throw new Error(auth.message);
+                    const fd = new FormData();
+                    fd.append('file', file); fd.append('fileName', file.name); fd.append('publicKey', pubKey);
+                    fd.append('signature', auth.data.signature); fd.append('expire', auth.data.expire.toString());
+                    fd.append('token', auth.data.token); fd.append('useUniqueFileName', 'true');
+                    const res = await fetch('https://upload.imagekit.io/api/v1/files/upload', { method: 'POST', body: fd });
+                    const data = await res.json(); if (!res.ok) throw new Error(data.message);
+                    setForm(prev => ({ ...prev, image: data.url }));
+                    await cms.logMedia({ file_name: file.name, file_url: data.url });
+                } catch (err) { alert(err.message); } finally { setUploading(false); }
+            };
+
+            return html`
+                <div className="bg-white rounded-lg shadow border">
+                    <div className="flex justify-between p-6 border-b">
+                        <div className="flex items-center gap-4">
+                            <button onClick=${onCancel} className="text-gray-500"><${Icon} name="ArrowLeft" /></button>
+                            <h2 className="text-xl font-bold">${initialData ? 'Edit' : 'New'} Post</h2>
+                        </div>
+                        <button onClick=${() => onSave(form)} disabled=${isSaving} className="bg-blue-600 text-white px-4 py-2 rounded flex gap-2 items-center disabled:opacity-50">
+                            <${Icon} name="Save" size=${18}/> ${isSaving ? 'Saving...' : 'Save'}
+                        </button>
+                    </div>
+                    <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className="lg:col-span-2 space-y-4">
+                            <input type="text" placeholder="Title" value=${form.title} onChange=${e => setForm({...form, title: e.target.value})} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none" />
+                            <input type="text" placeholder="Slug" value=${form.slug} onChange=${e => setForm({...form, slug: e.target.value})} className="w-full p-2 border rounded font-mono text-sm" />
+                            <textarea rows=${15} placeholder="Content (HTML or Markdown)" value=${form.content} onChange=${e => setForm({...form, content: e.target.value})} className="w-full p-2 border rounded font-mono text-sm" />
+                        </div>
+                        <div className="space-y-6">
+                            <div className="bg-gray-50 p-4 rounded border">
+                                <label className="text-xs font-bold text-gray-500 uppercase block mb-1">Status</label>
+                                <select value=${form.status} onChange=${e => setForm({...form, status: e.target.value})} className="w-full p-2 border rounded">
+                                    <option>Draft</option><option>Published</option>
+                                </select>
+                            </div>
+                            <div className="bg-gray-50 p-4 rounded border">
+                                <label className="text-xs font-bold text-gray-500 uppercase block mb-1">Featured Image</label>
+                                <input type="text" value=${form.image} onChange=${e => setForm({...form, image: e.target.value})} className="w-full p-2 border rounded text-xs mb-2" placeholder="Image URL" />
+                                <div className="flex gap-2 items-center">
+                                    <input type="file" onChange=${handleImage} className="text-xs w-full" />
+                                    ${uploading && html`<${Icon} name="Loader" className="animate-spin text-blue-600" size=${16}/>`}
+                                </div>
+                                ${form.image && html`<img src=${form.image} className="mt-4 rounded w-full border shadow-sm" />`}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        const App = () => {
+            const [view, setView] = useState('dashboard');
+            const [posts, setPosts] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [editingPost, setEditingPost] = useState(null);
+            const [apiUrl, setApiUrlState] = useState(getApiUrl());
+            const [tempApiUrl, setTempApiUrl] = useState(getApiUrl());
+            const [tempIkKey, setTempIkKey] = useState(getImageKitPublicKey());
+            const [status, setStatus] = useState(null);
+
+            useEffect(() => { if (view === 'dashboard' && apiUrl) fetchPosts(); }, [view, apiUrl]);
+            
+            const fetchPosts = async () => { 
+                setLoading(true); 
+                const res = await cms.getAllPosts(); 
+                if (res.status === 'success') setPosts(res.data || []); 
+                else console.error(res.message);
+                setLoading(false); 
+            };
+
+            const handleSave = async (p) => {
+                setLoading(true);
+                const res = editingPost ? await cms.updatePost({...p, oldSlug: editingPost.slug}) : await cms.createPost(p);
+                if (res.status === 'success') { setView('dashboard'); fetchPosts(); }
+                else alert(res.message);
+                setLoading(false);
+            };
+
+            const handleDelete = async (s) => { if (!confirm('Are you sure you want to delete this post?')) return; await cms.deletePost(s); fetchPosts(); };
+            const saveSettings = () => { setApiUrl(tempApiUrl); setApiUrlState(tempApiUrl); setImageKitPublicKey(tempIkKey); setView('dashboard'); };
+            const testConn = async () => { 
+                setApiUrl(tempApiUrl); 
+                setStatus(null);
+                const res = await cms.checkConnection(); 
+                if (res.data) setStatus(res.data);
+                else alert(res.message || "Failed to reach script");
+            };
+
+            const NavItem = ({ name, label, icon }) => html`
+                <button onClick=${() => { setEditingPost(null); setView(name); }} className=${`w-full flex items-center gap-2 p-2 rounded transition-colors ${view === name ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+                    <${Icon} name=${icon} size=${18}/> ${label}
+                </button>
+            `;
+
+            return html`
+                <div className="min-h-screen bg-gray-100 flex flex-col md:flex-row">
+                    <aside className="w-full md:w-64 bg-white border-r h-auto md:h-screen flex flex-col p-6 sticky top-0">
+                        <div className="flex items-center gap-2 mb-8">
+                            <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center text-white font-bold">C</div>
+                            <h1 className="text-xl font-black">CMS ADMIN</h1>
+                        </div>
+                        <nav className="flex-1 space-y-2">
+                            <${NavItem} name="dashboard" label="Posts" icon="Layout" />
+                            <${NavItem} name="editor" label="New Post" icon="PlusCircle" />
+                            <div className="pt-4 border-t border-gray-100 mt-4">
+                                <p className="text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Setup</p>
+                                <${NavItem} name="script" label="Backend Code" icon="Code" />
+                                <${NavItem} name="settings" label="Settings" icon="Settings" />
+                            </div>
+                        </nav>
+                        <div className=${`mt-auto p-3 rounded text-[10px] font-bold uppercase tracking-wider ${apiUrl ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                            ${apiUrl ? 'Connected' : 'Setup Required'}
+                        </div>
+                    </aside>
+
+                    <main className="flex-1 p-8 overflow-auto">
+                        <div className="max-w-4xl mx-auto">
+                            ${view === 'dashboard' && (apiUrl 
+                                ? html`<${Dashboard} posts=${posts} onEdit=${p => { setEditingPost(p); setView('editor'); }} onDelete=${handleDelete} loading=${loading} />` 
+                                : html`
+                                    <div className="text-center py-20 bg-white rounded border border-dashed border-gray-300">
+                                        <${Icon} name="CloudOff" size=${48} className="mx-auto text-gray-300 mb-4"/>
+                                        <h2 className="text-lg font-bold text-gray-700">API Not Found</h2>
+                                        <p className="text-gray-500 mb-6">Connect your Google Sheet to start managing content.</p>
+                                        <button onClick=${() => setView('settings')} className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition-colors">Go to Settings</button>
+                                    </div>
+                                `)}
+
+                            ${view === 'editor' && html`<${Editor} initialData=${editingPost} onSave=${handleSave} onCancel=${() => setView('dashboard')} isSaving=${loading} />`}
+                            
+                            ${view === 'script' && html`
+                                <div className="space-y-6">
+                                    <div className="bg-white p-6 rounded border shadow-sm">
+                                        <h3 className="font-bold mb-4 flex items-center gap-2"><${Icon} name="Code" /> Backend Deployment</h3>
+                                        <ol className="list-decimal ml-5 text-sm space-y-2 text-gray-600">
+                                            <li>Create a new <b>Google Sheet</b>.</li>
+                                            <li>Go to <b>Extensions > Apps Script</b>.</li>
+                                            <li>Paste the code below into <b>Code.gs</b> (replace all).</li>
+                                            <li>Run the <b>setup</b> function once from the toolbar.</li>
+                                            <li>Click <b>Deploy > New Deployment</b> (Web App, Anyone access).</li>
+                                            <li>Copy the URL and paste it into the <b>Settings</b> tab.</li>
+                                        </ol>
+                                    </div>
+                                    <div className="bg-gray-900 rounded overflow-hidden">
+                                        <div className="bg-gray-800 px-4 py-2 border-b border-gray-700 flex justify-between items-center">
+                                            <span className="text-xs text-gray-400 font-mono">Code.gs</span>
+                                            <button onClick=${() => { navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE); alert('Copied!'); }} className="text-xs bg-blue-600 text-white px-3 py-1 rounded">Copy</button>
+                                        </div>
+                                        <pre className="p-4 text-green-400 font-mono text-[11px] overflow-auto max-h-[500px] custom-scrollbar">${GOOGLE_APPS_SCRIPT_CODE}</pre>
+                                    </div>
+                                </div>
+                            `}
+
+                            ${view === 'settings' && html`
+                                <div className="bg-white p-6 rounded border shadow-sm space-y-8">
+                                    <h2 className="text-xl font-bold">Configuration</h2>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-bold mb-1 text-gray-700">Google Script Web App URL</label>
+                                            <input type="text" value=${tempApiUrl} onChange=${e => setTempApiUrl(e.target.value)} className="w-full p-2 border rounded font-mono text-xs focus:ring-2 focus:ring-blue-500 outline-none" placeholder="https://script.google.com/macros/s/..." />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold mb-1 text-gray-700">ImageKit Public Key</label>
+                                            <input type="text" value=${tempIkKey} onChange=${e => setTempIkKey(e.target.value)} className="w-full p-2 border rounded font-mono text-xs focus:ring-2 focus:ring-blue-500 outline-none" placeholder="public_..." />
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <button onClick=${saveSettings} className="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700 transition-colors">Save Settings</button>
+                                        <button onClick=${testConn} className="bg-gray-800 text-white px-6 py-2 rounded font-bold hover:bg-black transition-colors">Test Connection</button>
+                                    </div>
+                                    ${status && html`
+                                        <div className="p-4 bg-gray-50 rounded border text-xs space-y-2">
+                                            <p className="font-bold border-b pb-2 mb-2">System Health:</p>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <span>Website Sheet:</span> <span className=${status.sheets.website ? 'text-green-600 font-bold' : 'text-red-500'}>${status.sheets.website ? 'READY' : 'MISSING'}</span>
+                                                <span>Config Sheet:</span> <span className=${status.sheets.config ? 'text-green-600 font-bold' : 'text-red-500'}>${status.sheets.config ? 'READY' : 'MISSING'}</span>
+                                                <span>Media Sheet:</span> <span className=${status.sheets.media ? 'text-green-600 font-bold' : 'text-red-500'}>${status.sheets.media ? 'READY' : 'MISSING'}</span>
+                                                <span>Private Key:</span> <span className=${status.config.imageKitKey ? 'text-green-600 font-bold' : 'text-red-500'}>${status.config.imageKitKey ? 'DETECTED' : 'MISSING IN CONFIG'}</span>
+                                            </div>
+                                        </div>
+                                    `}
+                                </div>
+                            `}
+                        </div>
+                    </main>
+                </div>
+            `;
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(html`<${App} />`);
+    </script>
+</body>
 </html>
